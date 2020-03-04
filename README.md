@@ -35,7 +35,7 @@ source region (in this case the number of counts; technically sum of
 pixel values in input image), and modifies the roi files to assign any
 overlapping area to the brightest source (highest metric).
 
-![roi example files][ranked_roi.png]
+![roi example files](ranked_roi.png)
 
 
 
