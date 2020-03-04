@@ -69,7 +69,6 @@ class ROI_File():
         The 1st shape, `self.region[0]`, is the shape-of-interest
         for this ROI_File object.        
         """
-        
         self.filename = filename
         self.region = CXCRegion(filename)
         self.r0 = self.region[0]
@@ -101,7 +100,6 @@ class ROI_File():
         the other shape is located at and translate that into
         a DM #row filter.        
         """
-
         # skip self
         if other.r0 == self.r0:
             return
@@ -117,66 +115,29 @@ class ROI_File():
         self.del_other.extend(idx)
 
         
-    def reload_with_filter(self):
-        """Re load region file with a row filter applied to 
-        exclude lesser shapes.
+    def write(self, pars):
+        """Write out a new roi file by copying selected rows from 
+        the input.
+
+        This turns out to be a lot easier than trying to copy 
+        header, history, wcs's from input to output.
         """
+        dmcopy=make_tool("dmcopy")
 
         if len(self.del_other)>0:
             # +1: array index -> dm row number
             rr = ",".join([str(x+1) for x in self.del_other]) 
             ff = "{}[exclude #row={}]"
             ff = ff.format(self.filename, rr)
-            self.new_region = CXCRegion(ff)
         else:      
-            self.new_region = CXCRegion(self.filename)
+            ff = self.filename
 
-        
-    def write(self, outroot, pars):
-        """Write a new output file, work hard to copy 
-        headers, blocks, and (sigh) rename SRCREG block"""
+        dmcopy(ff, self.outfile, clobber=pars["clobber"], opt="all")
 
-        self.new_region.write(self.outfile, fits=True, 
-                clobber=pars["clobber"])
-        
-        _in = read_file(self.filename)
-        _ind = _in.get_dataset()
-
-        _out = read_file(self.outfile, mode="rw")
-        _outd = _out.get_dataset()
-
-        # copy header keywords
-        # TBD: we may  want to edit/modify/delete some keys
-        for k in get_key_names(_in):
-            _k = _in.get_key(k)
-            _out.add_key(_k)
-
-        # copy history
-        h = _in.get_history_records()
-        for _h in h:
-            add_history( _out, _h[1] )
-
-        # copy primary header keywords
-        _inp = _ind.get_crate(1)
-        _outp = _outd.get_crate(1)
-        for k in get_key_names(_inp):
-            _k = _inp.get_key(k)
-            _outp.add_key(_k)
-
-        # copy background region (unmodified)
-        _inbkg = _ind.get_crate("bkgreg")
-        _outd.add_crate(_inbkg)        
-        _outd.write()
-        
-        # I hoped there was a better way ....
-        dmhedit = make_tool("dmhedit")
-        dmhedit(self.outfile, operation="add", key="HDUNAME", 
-            value="SRCREG")
-
-        # I want this history last
         from ciao_contrib.runtool import add_tool_history
         add_tool_history( self.outfile, toolname, pars, 
                                     toolversion=__revision__)
+        
             
 
 @lw.handle_ciao_errors( toolname, __revision__)
@@ -186,26 +147,23 @@ def main():
     pars = get_params(toolname, "rw", sys.argv, 
         verbose={"set":lw.set_verbosity, "cmd":verb1} )
 
-    infile=pars["infile"]
-    roifiles=pars["roifiles"]
-    outroot = pars["outfile"]
-    pars["clobber"] = ("yes" == pars["clobber"])
-
     # Load all roi files
     verb1("Loading ROI files")
     import stk
-    rois = stk.build(roifiles)
-    rois_reg = [ROI_File(r,outroot) for r in rois]
+    rois = stk.build(pars["roifiles"])
+    rois_reg = [ROI_File(r,pars["outfile"]) for r in rois]
     verb1("{} ROI files parsed".format(len(rois_reg)))
 
     # Remove outfiles
     verb1("Checking clobber")
     from ciao_contrib._tools.fileio import outfile_clobber_checks
+    pars["clobber"] = ("yes"== pars["clobber"])
     for r in rois_reg:
         outfile_clobber_checks(pars["clobber"],r.outfile)
 
     # Compute roi metric
     verb1("Checking infile (image v. table)")
+    infile=pars["infile"]
     oo = read_file(infile)
     if isinstance(oo, IMAGECrate) is not True:
         infile=infile+"[bin sky]"
@@ -223,8 +181,7 @@ def main():
     # Write output    
     verb1("Writing out new roi files")
     for r in rois_reg:
-        r.reload_with_filter()
-        r.write(outroot, pars)
+        r.write(pars)
 
     # Fin.
 
