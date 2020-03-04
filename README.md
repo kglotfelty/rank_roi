@@ -35,8 +35,18 @@ source region (in this case the number of counts; technically sum of
 pixel values in input image), and modifies the roi files to assign any
 overlapping area to the brightest source (highest metric).
 
+## Example
+
+The figure below shows a map ID'ing the source regions created using
+`roi` (on the right), and with `rank_roi` applied (on the left).
+The colors are random and map to the source ID; black colored pixels 
+unassigned to any source.
+
 ![roi example files](ranked_roi.png)
 
-
+In the Right frame, the area between overlapping sources is unassigned
+(black).  In the Left frame, the source regions have been ranked 
+based on the number of counts and the area has been assigned to the
+brightest source. 
 
 
