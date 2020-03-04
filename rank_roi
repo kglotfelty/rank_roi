@@ -31,19 +31,21 @@ verb0 = lgr.verbose0
 verb1 = lgr.verbose1
 verb2 = lgr.verbose2
 
-
 """
 The way the roi tool works, specifically when using 
 
     group=exclude
 
-is that all overlaps are ignored.  So if  file 1 has : circleA - EllipseB, the
-there will be another file with EllipseB - circleA.  The overlap
-area between A and B is omitted.
+is that all overlaping area is ignored.  So if  file 1 has : 
+circleA - EllipseB, the there will be another file with 
+EllipseB - circleA.  The overlap area between A and B is omitted.
 
 The goal of this script is to assign that overlap area to the
 "best" source.  Here we define "best" as the source with the largest
 number of counts.
+
+    Note: "best" could also be defined as the faintest, biggest, 
+    smallest, roundest, ... limitless options
 
 We know that the 1st shape in the SRCREG extension is "the" shape
 from which any overlapping shapes are excluded and FOV's intersected.
@@ -54,7 +56,6 @@ we know that circleA in both files is exactly the same (no
 string truncation nonsense).
 """
 
-
 from region import CXCRegion
 from pycrates import *
 from ciao_contrib.runtool import make_tool
@@ -62,7 +63,7 @@ from ciao_contrib.runtool import make_tool
 class ROI_File():
     """Hold the contents of a single ROI output file"""
     
-    def __init__(self,filename):
+    def __init__(self,filename,out_template):
         """init class from a single roi file
         
         The 1st shape, `self.region[0]`, is the shape-of-interest
@@ -75,8 +76,10 @@ class ROI_File():
         self.metric = None
         self.del_other = []
         _cr = read_file(filename)
+
         self.regionid = int(_cr.get_key_value("REGIONID").lstrip("0"))
-        
+        self.outfile = out_template.format(self.regionid)
+
 
     def compute_metric(self,propfile):
         """Compute some metric for shape of interest
@@ -133,16 +136,13 @@ class ROI_File():
         """Write a new output file, work hard to copy 
         headers, blocks, and (sigh) rename SRCREG block"""
 
-        from ciao_contrib.runtool import add_tool_history
-        outfile = outroot.format(self.regionid)
-        self.new_region.write(outfile, fits=True, clobber=pars["clobber"])
-        add_tool_history( outfile, toolname, pars, 
-                                    toolversion=__revision__)
+        self.new_region.write(self.outfile, fits=True, 
+                clobber=pars["clobber"])
         
         _in = read_file(self.filename)
         _ind = _in.get_dataset()
 
-        _out = read_file(outfile, mode="rw")
+        _out = read_file(self.outfile, mode="rw")
         _outd = _out.get_dataset()
 
         # copy header keywords
@@ -170,7 +170,13 @@ class ROI_File():
         
         # I hoped there was a better way ....
         dmhedit = make_tool("dmhedit")
-        dmhedit(outfile, operation="add", key="HDUNAME", value="SRCREG")
+        dmhedit(self.outfile, operation="add", key="HDUNAME", 
+            value="SRCREG")
+
+        # I want this history last
+        from ciao_contrib.runtool import add_tool_history
+        add_tool_history( self.outfile, toolname, pars, 
+                                    toolversion=__revision__)
             
 
 @lw.handle_ciao_errors( toolname, __revision__)
@@ -186,29 +192,36 @@ def main():
     pars["clobber"] = ("yes" == pars["clobber"])
 
     # Load all roi files
+    verb1("Loading ROI files")
     import stk
     rois = stk.build(roifiles)
-    rois_reg = [ROI_File(r) for r in rois]
+    rois_reg = [ROI_File(r,outroot) for r in rois]
+    verb1("{} ROI files parsed".format(len(rois_reg)))
 
     # Remove outfiles
+    verb1("Checking clobber")
     from ciao_contrib._tools.fileio import outfile_clobber_checks
     for r in rois_reg:
-        outfile = outroot.format(r.regionid)
-        outfile_clobber_checks(pars["clobber"],outfile)
+        outfile_clobber_checks(pars["clobber"],r.outfile)
 
     # Compute roi metric
+    verb1("Checking infile (image v. table)")
     oo = read_file(infile)
     if isinstance(oo, IMAGECrate) is not True:
         infile=infile+"[bin sky]"
+        verb1("Infile is a table, will bin into an image")
+    verb1("Computing metric for all ROIs")
     for r in rois_reg:
         r.compute_metric(infile)
 
     # Determine which roi is best
+    verb1("Determining which ROIs should get overlap area")
     for r in rois_reg:
         for k in rois_reg:
             k.remove_from(r)
 
     # Write output    
+    verb1("Writing out new roi files")
     for r in rois_reg:
         r.reload_with_filter()
         r.write(outroot, pars)
