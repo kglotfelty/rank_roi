@@ -1,0 +1,224 @@
+#!/usr/bin/env python
+#
+# Copyright (C) 2020 Smithsonian Astrophysical Observatory
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+
+
+toolname = "rank_roi"
+__revision__ = "04 March 2020"
+
+import os
+import sys
+
+import ciao_contrib.logger_wrapper as lw
+lw.initialize_logger(toolname)
+lgr = lw.get_logger(toolname)
+verb0 = lgr.verbose0
+verb1 = lgr.verbose1
+verb2 = lgr.verbose2
+
+
+"""
+The way the roi tool works, specifically when using 
+
+    group=exclude
+
+is that all overlaps are ignored.  So if  file 1 has : circleA - EllipseB, the
+there will be another file with EllipseB - circleA.  The overlap
+area between A and B is omitted.
+
+The goal of this script is to assign that overlap area to the
+"best" source.  Here we define "best" as the source with the largest
+number of counts.
+
+We know that the 1st shape in the SRCREG extension is "the" shape
+from which any overlapping shapes are excluded and FOV's intersected.
+
+Thankfully, the way roi works, this 1st shape is identically
+replicated in other roi files where it is excluded.  So if
+we know that circleA in both files is exactly the same (no 
+string truncation nonsense).
+"""
+
+
+from region import CXCRegion
+from pycrates import *
+from ciao_contrib.runtool import make_tool
+
+class ROI_File():
+    """Hold the contents of a single ROI output file"""
+    
+    def __init__(self,filename):
+        """init class from a single roi file
+        
+        The 1st shape, `self.region[0]`, is the shape-of-interest
+        for this ROI_File object.        
+        """
+        
+        self.filename = filename
+        self.region = CXCRegion(filename)
+        self.r0 = self.region[0]
+        self.metric = None
+        self.del_other = []
+        _cr = read_file(filename)
+        self.regionid = int(_cr.get_key_value("REGIONID").lstrip("0"))
+        
+
+    def compute_metric(self,propfile):
+        """Compute some metric for shape of interest
+
+        The metric we're using the sum of the pixel values in region.
+        This can be counts (or could be say photon flux).
+        """
+        dmstat = make_tool("dmstat")
+        dmstat.infile="{}[sky={}]".format(propfile, self.r0)
+        dmstat(centroid=False)
+        self.metric = float(dmstat.out_sum)
+    
+    
+    def remove_from(self,other):                    
+        """Determine if self should get overlap area or 
+        release it to another shape
+        
+        The easiest way to do this is to identify which indices
+        the other shape is located at and translate that into
+        a DM #row filter.        
+        """
+
+        # skip self
+        if other.r0 == self.r0:
+            return
+
+        # skip if other is bigger
+        if other.metric > self.metric:
+            return
+        
+        # remove all instances of other from self.  With fov files
+        # the roi file may have multiple instances of other.r0, be
+        # sure to remove them all.
+        idx = self.region.index(~other.r0)
+        self.del_other.extend(idx)
+
+        
+    def reload_with_filter(self):
+        """Re load region file with a row filter applied to 
+        exclude lesser shapes.
+        """
+
+        if len(self.del_other)>0:
+            # +1: array index -> dm row number
+            rr = ",".join([str(x+1) for x in self.del_other]) 
+            ff = "{}[exclude #row={}]"
+            ff = ff.format(self.filename, rr)
+            self.new_region = CXCRegion(ff)
+        else:      
+            self.new_region = CXCRegion(self.filename)
+
+        
+    def write(self, outroot, pars):
+        """Write a new output file, work hard to copy 
+        headers, blocks, and (sigh) rename SRCREG block"""
+
+        from ciao_contrib.runtool import add_tool_history
+        outfile = outroot.format(self.regionid)
+        self.new_region.write(outfile, fits=True, clobber=pars["clobber"])
+        add_tool_history( outfile, toolname, pars, 
+                                    toolversion=__revision__)
+        
+        _in = read_file(self.filename)
+        _ind = _in.get_dataset()
+
+        _out = read_file(outfile, mode="rw")
+        _outd = _out.get_dataset()
+
+        # copy header keywords
+        # TBD: we may  want to edit/modify/delete some keys
+        for k in get_key_names(_in):
+            _k = _in.get_key(k)
+            _out.add_key(_k)
+
+        # copy history
+        h = _in.get_history_records()
+        for _h in h:
+            add_history( _out, _h[1] )
+
+        # copy primary header keywords
+        _inp = _ind.get_crate(1)
+        _outp = _outd.get_crate(1)
+        for k in get_key_names(_inp):
+            _k = _inp.get_key(k)
+            _outp.add_key(_k)
+
+        # copy background region (unmodified)
+        _inbkg = _ind.get_crate("bkgreg")
+        _outd.add_crate(_inbkg)        
+        _outd.write()
+        
+        # I hoped there was a better way ....
+        dmhedit = make_tool("dmhedit")
+        dmhedit(outfile, operation="add", key="HDUNAME", value="SRCREG")
+            
+
+@lw.handle_ciao_errors( toolname, __revision__)
+def main():
+
+    from ciao_contrib.param_soaker import get_params
+    pars = get_params(toolname, "rw", sys.argv, 
+        verbose={"set":lw.set_verbosity, "cmd":verb1} )
+
+    infile=pars["infile"]
+    roifiles=pars["roifiles"]
+    outroot = pars["outfile"]
+    pars["clobber"] = ("yes" == pars["clobber"])
+
+    # Load all roi files
+    import stk
+    rois = stk.build(roifiles)
+    rois_reg = [ROI_File(r) for r in rois]
+
+    # Remove outfiles
+    from ciao_contrib._tools.fileio import outfile_clobber_checks
+    for r in rois_reg:
+        outfile = outroot.format(r.regionid)
+        outfile_clobber_checks(pars["clobber"],outfile)
+
+    # Compute roi metric
+    oo = read_file(infile)
+    if isinstance(oo, IMAGECrate) is not True:
+        infile=infile+"[bin sky]"
+    for r in rois_reg:
+        r.compute_metric(infile)
+
+    # Determine which roi is best
+    for r in rois_reg:
+        for k in rois_reg:
+            k.remove_from(r)
+
+    # Write output    
+    for r in rois_reg:
+        r.reload_with_filter()
+        r.write(outroot, pars)
+
+    # Fin.
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as E:
+        print("\n# "+toolname+" ("+__revision__+"): ERROR "+str(E)+"\n", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
