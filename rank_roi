@@ -17,14 +17,18 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 
-
-toolname = "rank_roi"
-__revision__ = "04 March 2020"
-
 import os
 import sys
 
 import ciao_contrib.logger_wrapper as lw
+from region import CXCRegion
+from pycrates import read_file, IMAGECrate
+from ciao_contrib.runtool import make_tool
+
+
+toolname = "rank_roi"
+__revision__ = "10 June 2020"
+
 lw.initialize_logger(toolname)
 lgr = lw.get_logger(toolname)
 verb0 = lgr.verbose0
@@ -32,19 +36,19 @@ verb1 = lgr.verbose1
 verb2 = lgr.verbose2
 
 """
-The way the roi tool works, specifically when using 
+The way the roi tool works, specifically when using
 
     group=exclude
 
-is that all overlaping area is ignored.  So if  file 1 has : 
-circleA - EllipseB, the there will be another file with 
+is that all overlaping area is ignored.  So if  file 1 has :
+circleA - EllipseB, the there will be another file with
 EllipseB - circleA.  The overlap area between A and B is omitted.
 
 The goal of this script is to assign that overlap area to the
 "best" source.  Here we define "best" as the source with the largest
 number of counts.
 
-    Note: "best" could also be defined as the faintest, biggest, 
+    Note: "best" could also be defined as the faintest, biggest,
     smallest, roundest, ... limitless options
 
 We know that the 1st shape in the SRCREG extension is "the" shape
@@ -52,22 +56,19 @@ from which any overlapping shapes are excluded and FOV's intersected.
 
 Thankfully, the way roi works, this 1st shape is identically
 replicated in other roi files where it is excluded.  So if
-we know that circleA in both files is exactly the same (no 
+we know that circleA in both files is exactly the same (no
 string truncation nonsense).
 """
 
-from region import CXCRegion
-from pycrates import *
-from ciao_contrib.runtool import make_tool
 
 class ROI_File():
     """Hold the contents of a single ROI output file"""
-    
-    def __init__(self,filename,out_template):
+
+    def __init__(self, filename, out_template):
         """init class from a single roi file
-        
+
         The 1st shape, `self.region[0]`, is the shape-of-interest
-        for this ROI_File object.        
+        for this ROI_File object.
         """
         self.filename = filename
         self.region = CXCRegion(filename)
@@ -79,26 +80,24 @@ class ROI_File():
         self.regionid = int(_cr.get_key_value("REGIONID").lstrip("0"))
         self.outfile = out_template.format(self.regionid)
 
-
-    def compute_metric(self,propfile):
+    def compute_metric(self, propfile):
         """Compute some metric for shape of interest
 
         The metric we're using the sum of the pixel values in region.
         This can be counts (or could be say photon flux).
         """
         dmstat = make_tool("dmstat")
-        dmstat.infile="{}[sky={}]".format(propfile, self.r0)
+        dmstat.infile = "{}[sky={}]".format(propfile, self.r0)
         dmstat(centroid=False)
         self.metric = float(dmstat.out_sum)
-    
-    
-    def remove_from(self,other):                    
-        """Determine if self should get overlap area or 
+
+    def remove_from(self, other):
+        """Determine if self should get overlap area or
         release it to another shape
-        
+
         The easiest way to do this is to identify which indices
         the other shape is located at and translate that into
-        a DM #row filter.        
+        a DM #row filter.
         """
         # skip self
         if other.r0 == self.r0:
@@ -107,66 +106,64 @@ class ROI_File():
         # skip if other is bigger
         if other.metric > self.metric:
             return
-        
+
         # remove all instances of other from self.  With fov files
         # the roi file may have multiple instances of other.r0, be
         # sure to remove them all.
         idx = self.region.index(~other.r0)
         self.del_other.extend(idx)
 
-        
     def write(self, pars):
-        """Write out a new roi file by copying selected rows from 
+        """Write out a new roi file by copying selected rows from
         the input.
 
-        This turns out to be a lot easier than trying to copy 
+        This turns out to be a lot easier than trying to copy
         header, history, wcs's from input to output.
         """
-        dmcopy=make_tool("dmcopy")
+        dmcopy = make_tool("dmcopy")
 
-        if len(self.del_other)>0:
+        if len(self.del_other) > 0:
             # +1: array index -> dm row number
-            rr = ",".join([str(x+1) for x in self.del_other]) 
+            rr = ", ".join([str(x+1) for x in self.del_other])
             ff = "{}[exclude #row={}]"
             ff = ff.format(self.filename, rr)
-        else:      
+        else:
             ff = self.filename
 
         dmcopy(ff, self.outfile, clobber=pars["clobber"], opt="all")
 
         from ciao_contrib.runtool import add_tool_history
-        add_tool_history( self.outfile, toolname, pars, 
-                                    toolversion=__revision__)
-        
-            
+        add_tool_history(self.outfile, toolname, pars,
+                         toolversion=__revision__)
 
-@lw.handle_ciao_errors( toolname, __revision__)
+
+@lw.handle_ciao_errors(toolname, __revision__)
 def main():
 
     from ciao_contrib.param_soaker import get_params
-    pars = get_params(toolname, "rw", sys.argv, 
-        verbose={"set":lw.set_verbosity, "cmd":verb1} )
+    pars = get_params(toolname, "rw", sys.argv,
+                      verbose={"set": lw.set_verbosity, "cmd": verb1})
 
     # Load all roi files
     verb1("Loading ROI files")
     import stk
     rois = stk.build(pars["roifiles"])
-    rois_reg = [ROI_File(r,pars["outfile"]) for r in rois]
+    rois_reg = [ROI_File(r, pars["outfile"]) for r in rois]
     verb1("{} ROI files parsed".format(len(rois_reg)))
 
     # Remove outfiles
     verb1("Checking clobber")
     from ciao_contrib._tools.fileio import outfile_clobber_checks
-    pars["clobber"] = ("yes"== pars["clobber"])
+    pars["clobber"] = ("yes" == pars["clobber"])
     for r in rois_reg:
-        outfile_clobber_checks(pars["clobber"],r.outfile)
+        outfile_clobber_checks(pars["clobber"], r.outfile)
 
     # Compute roi metric
     verb1("Checking infile (image v. table)")
-    infile=pars["infile"]
+    infile = pars["infile"]
     oo = read_file(infile)
     if isinstance(oo, IMAGECrate) is not True:
-        infile=infile+"[bin sky]"
+        infile = infile+"[bin sky]"
         verb1("Infile is a table, will bin into an image")
     verb1("Computing metric for all ROIs")
     for r in rois_reg:
@@ -178,12 +175,12 @@ def main():
         for k in rois_reg:
             k.remove_from(r)
 
-    # Write output    
+    # Write output
     verb1("Writing out new roi files")
     for r in rois_reg:
         r.write(pars)
-
     # Fin.
+
 
 if __name__ == "__main__":
     try:
