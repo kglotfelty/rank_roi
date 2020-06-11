@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE cxchelptopics SYSTEM "CXCHelp.dtd" [
+ <!ENTITY pr "unix&#37;">
+]>
+<cxchelptopics>
+  <ENTRY key="rank_roi"
+         context="tools" 
+         refkeywords="roi region regions reg combine overlap exclude bright faint flux counts"
+         seealsogroups="detecttools regiontools">
+
+    <SYNOPSIS></SYNOPSIS>
+
+    <DESC>
+      <PARA>
+      </PARA>
+    </DESC>
+
+    <QEXAMPLELIST>
+      <QEXAMPLE>
+        <SYNTAX>
+        </SYNTAX>
+        <DESC>
+          <PARA></PARA>
+        </DESC>
+      </QEXAMPLE>
+    </QEXAMPLELIST>
+
+
+   <PARAMLIST>
+     <PARAM name="infile" type="file" filetype="input" reqd="yes" stacks="no">
+       <SYNOPSIS>
+       </SYNOPSIS>
+       <DESC>
+         <PARA>
+         </PARA>
+       </DESC>     
+     </PARAM>
+
+     <PARAM name="roifiles" type="file" filetype="input" reqd="yes" stacks="yes">
+       <SYNOPSIS>
+       </SYNOPSIS>
+       <DESC>
+         <PARA>
+         </PARA>
+       </DESC>     
+     </PARAM>
+
+     <PARAM name="outfile" type="file" filetype="output" reqd="yes" stacks="no">
+       <SYNOPSIS>
+       </SYNOPSIS>
+       <DESC>
+         <PARA>
+         </PARA>
+       </DESC>     
+     </PARAM>
+
+     <PARAM name="method" type="string" reqd="no" stacks="no" def="max">
+       <SYNOPSIS>
+       </SYNOPSIS>
+       <DESC>
+         <PARA>
+         </PARA>
+        <PARA>
+        The overlapping region area is assigned based on the method
+        parameter:
+        </PARA>
+
+         <LIST>
+           <ITEM>max : the region with the largest flux</ITEM>
+           <ITEM>min : the region with the least flux</ITEM>
+           <ITEM>bright : the region with the brightest  pixel (maximum, maximum pixel value)</ITEM>
+           <ITEM>faint : the region with the faintest pixel (minimum, maximum pixel value)</ITEM>
+           <ITEM>big : the region with the largest area</ITEM>
+           <ITEM>small : the region with the smallest area</ITEM>
+         </LIST>
+
+       </DESC>     
+     </PARAM>
+
+
+
+     <PARAM name="verbose" type="integer" min="0" max="5" def="1">
+       <SYNOPSIS>
+        Amount of tool chatter level.
+       </SYNOPSIS>
+     </PARAM>
+     <PARAM name="clobber" type="boolean" def="no">
+        <SYNOPSIS>
+            Overwrite output files if they already exist?
+        </SYNOPSIS>
+      </PARAM>
+    </PARAMLIST>
+
+
+
+
+    <ADESC title="About Contributed Software">
+      <PARA>
+        This script is not an official part of the CIAO release but is
+        made available as "contributed" software via the
+        <HREF link="https://cxc.harvard.edu/ciao/download/scripts/">CIAO scripts page</HREF>.
+        Please see this page for installation instructions.
+      </PARA>
+    </ADESC>
+
+
+    <LASTMODIFIED>June 2020</LASTMODIFIED>
+  </ENTRY>
+</cxchelptopics>
