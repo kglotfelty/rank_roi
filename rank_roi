@@ -17,13 +17,15 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 
+"Assign overlapping region area based on selected metric"
+
 import os
 import sys
 
-import ciao_contrib.logger_wrapper as lw
 from region import CXCRegion
 from pycrates import read_file, IMAGECrate
 from ciao_contrib.runtool import make_tool
+import ciao_contrib.logger_wrapper as lw
 
 
 toolname = "rank_roi"
@@ -61,18 +63,18 @@ string truncation nonsense).
 """
 
 
-class ROI_File():
+class ROIFile():
     """Hold the contents of a single ROI output file"""
 
     def __init__(self, filename, out_template):
         """init class from a single roi file
 
         The 1st shape, `self.region[0]`, is the shape-of-interest
-        for this ROI_File object.
+        for this ROIFile object.
         """
         self.filename = filename
         self.region = CXCRegion(filename)
-        self.r0 = self.region[0]
+        self.roi = self.region[0]
         self.metric = None
         self.del_other = []
         _cr = read_file(filename)
@@ -80,16 +82,17 @@ class ROI_File():
         self.regionid = int(_cr.get_key_value("REGIONID").lstrip("0"))
         self.outfile = out_template.format(self.regionid)
 
-    def compute_metric(self, propfile):
-        """Compute some metric for shape of interest
+    def run_dmstat(self, propfile):
+        """Run dmstat
 
-        The metric we're using the sum of the pixel values in region.
-        This can be counts (or could be say photon flux).
-        """
-        dmstat = make_tool("dmstat")
-        dmstat.infile = "{}[sky={}]".format(propfile, self.r0)
-        dmstat(centroid=False)
-        self.metric = float(dmstat.out_sum)
+        This is common to most of the metrics"""
+        self.dmstat = make_tool("dmstat")
+        self.dmstat.infile = "{}[sky={}]".format(propfile, self.roi)
+        self.dmstat(centroid=False)
+
+    def compute_metric(self, propfile):
+        """Compute some metric for shape of interest"""
+        raise NotImplementedError("Implement in the subclasses")
 
     def remove_from(self, other):
         """Determine if self should get overlap area or
@@ -100,7 +103,7 @@ class ROI_File():
         a DM #row filter.
         """
         # skip self
-        if other.r0 == self.r0:
+        if other.roi == self.roi:
             return
 
         # skip if other is bigger
@@ -108,9 +111,9 @@ class ROI_File():
             return
 
         # remove all instances of other from self.  With fov files
-        # the roi file may have multiple instances of other.r0, be
+        # the roi file may have multiple instances of other.roi, be
         # sure to remove them all.
-        idx = self.region.index(~other.r0)
+        idx = self.region.index(~other.roi)
         self.del_other.extend(idx)
 
     def write(self, pars):
@@ -137,28 +140,91 @@ class ROI_File():
                          toolversion=__revision__)
 
 
-@lw.handle_ciao_errors(toolname, __revision__)
-def main():
+class MostFlux(ROIFile):
+    """
+    The metric we're using the sum of the pixel values in region.
+    This can be counts (or could be say photon flux).
+    """
+    def compute_metric(self, propfile):
+        self.run_dmstat(propfile)
+        self.metric = float(self.dmstat.out_sum)
 
-    from ciao_contrib.param_soaker import get_params
-    pars = get_params(toolname, "rw", sys.argv,
-                      verbose={"set": lw.set_verbosity, "cmd": verb1})
 
-    # Load all roi files
+class LeastFlux(ROIFile):
+    """
+    The metric we're using the sum of the pixel values in region.
+    This can be counts (or could be say photon flux).
+    """
+    def compute_metric(self, propfile):
+        self.run_dmstat(propfile)
+        retval = float(self.dmstat.out_sum)
+        self.metric = 1.0/retval if retval != 0.0 else 0.0
+
+
+class BrightestPixel(ROIFile):
+    """Pick region with brighest pixel
+    """
+    def compute_metric(self, propfile):
+        self.run_dmstat(propfile)
+        self.metric = float(self.dmstat.out_max)
+
+
+class FaintestPixel(ROIFile):
+    """Pick region with most faint max pixel
+    """
+    def compute_metric(self, propfile):
+        self.run_dmstat(propfile)
+        retval = float(self.dmstat.out_max)
+        self.metric = 1.0/retval if retval != 0.0 else 0.0
+
+
+class LargestArea(ROIFile):
+    """Pick region with most area
+    """
+    def compute_metric(self, propfile):
+        self.metric = self.roi.area()
+
+
+class SmallestArea(ROIFile):
+    """Pick region with least area
+    """
+    def compute_metric(self, propfile):
+        retval = self.roi.area()
+        self.metric = 1.0/retval if retval != 0.0 else 0.0
+
+
+def map_metric(func):
+    """Map string to object type"""
+    retval = {'min': LeastFlux, 'max': MostFlux,
+              'bright': BrightestPixel, 'faint': FaintestPixel,
+              'big': LargestArea, 'small': SmallestArea,
+             }
+    return retval[func]
+
+
+def load_rois(pars):
+    'Load all roi files'
     verb1("Loading ROI files")
     import stk
     rois = stk.build(pars["roifiles"])
-    rois_reg = [ROI_File(r, pars["outfile"]) for r in rois]
-    verb1("{} ROI files parsed".format(len(rois_reg)))
 
-    # Remove outfiles
+    metric = map_metric(pars["method"])
+    rois_reg = [metric(r, pars["outfile"]) for r in rois]
+    verb1("{} ROI files parsed".format(len(rois_reg)))
+    return rois_reg
+
+
+def clobber_outfiles(pars, rois_reg):
+    'Remove outfiles'
     verb1("Checking clobber")
     from ciao_contrib._tools.fileio import outfile_clobber_checks
     pars["clobber"] = ("yes" == pars["clobber"])
     for r in rois_reg:
         outfile_clobber_checks(pars["clobber"], r.outfile)
 
-    # Compute roi metric
+
+def compute_metric(pars, rois_reg):
+    'Compute roi metric'
     verb1("Checking infile (image v. table)")
     infile = pars["infile"]
     oo = read_file(infile)
@@ -169,23 +235,42 @@ def main():
     for r in rois_reg:
         r.compute_metric(infile)
 
-    # Determine which roi is best
+
+def pick_winner(rois_reg):
+    'Determine which roi is best'
     verb1("Determining which ROIs should get overlap area")
     for r in rois_reg:
         for k in rois_reg:
             k.remove_from(r)
 
-    # Write output
+
+def write_outputs(pars, rois_reg):
+    'Write output'
     verb1("Writing out new roi files")
     for r in rois_reg:
         r.write(pars)
-    # Fin.
+
+
+@lw.handle_ciao_errors(toolname, __revision__)
+def main():
+    'main program'
+    
+    from ciao_contrib.param_soaker import get_params
+    pars = get_params(toolname, "rw", sys.argv,
+                      verbose={"set": lw.set_verbosity, "cmd": verb1})
+
+    rois_reg = load_rois(pars)
+    clobber_outfiles(pars, rois_reg)
+    compute_metric(pars, rois_reg)
+    pick_winner(rois_reg)
+    write_outputs(pars, rois_reg)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as E:
-        print("\n# "+toolname+" ("+__revision__+"): ERROR "+str(E)+"\n", file=sys.stderr)
+        print("\n# "+toolname+" ("+__revision__+"): ERROR "+str(E)+"\n",
+              file=sys.stderr)
         sys.exit(1)
     sys.exit(0)
