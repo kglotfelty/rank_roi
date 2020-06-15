@@ -157,8 +157,7 @@ class LeastFlux(ROIFile):
     """
     def compute_metric(self, propfile):
         self.run_dmstat(propfile)
-        retval = float(self.dmstat.out_sum)
-        self.metric = 1.0/retval if retval != 0.0 else 0.0
+        self.metric = -1.0*float(self.dmstat.out_sum)
 
 
 class BrightestPixel(ROIFile):
@@ -174,8 +173,7 @@ class FaintestPixel(ROIFile):
     """
     def compute_metric(self, propfile):
         self.run_dmstat(propfile)
-        retval = float(self.dmstat.out_max)
-        self.metric = 1.0/retval if retval != 0.0 else 0.0
+        self.metric = -1.0*float(self.dmstat.out_max)
 
 
 class LargestArea(ROIFile):
@@ -189,16 +187,14 @@ class SmallestArea(ROIFile):
     """Pick region with least area
     """
     def compute_metric(self, propfile):
-        retval = self.roi.area()
-        self.metric = 1.0/retval if retval != 0.0 else 0.0
+        self.metric = -1.0*self.roi.area()
 
 
 def map_metric(func):
     """Map string to object type"""
     retval = {'min': LeastFlux, 'max': MostFlux,
               'bright': BrightestPixel, 'faint': FaintestPixel,
-              'big': LargestArea, 'small': SmallestArea,
-             }
+              'big': LargestArea, 'small': SmallestArea, }
     return retval[func]
 
 
@@ -234,6 +230,7 @@ def compute_metric(pars, rois_reg):
     verb1("Computing metric for all ROIs")
     for r in rois_reg:
         r.compute_metric(infile)
+        verb2("region {}\tmetric {}".format(r.regionid, r.metric))
 
 
 def pick_winner(rois_reg):
@@ -254,7 +251,7 @@ def write_outputs(pars, rois_reg):
 @lw.handle_ciao_errors(toolname, __revision__)
 def main():
     'main program'
-    
+
     from ciao_contrib.param_soaker import get_params
     pars = get_params(toolname, "rw", sys.argv,
                       verbose={"set": lw.set_verbosity, "cmd": verb1})
