@@ -1,4 +1,13 @@
 
+# For ciao installed using ciao-install:
+#
+#     python setup.py build -e "/usr/bin/env python" install --prefix "$ASCDS_INSTALL/contrib" 
+#
+# For ciao installed using conda
+#
+#     python setup.py install
+
+
 import os
 import sys
 
